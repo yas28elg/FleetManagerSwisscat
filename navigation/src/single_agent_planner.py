@@ -1,3 +1,6 @@
+##############################
+# FILE THAT CREATES THE PATH FOR ONE AGENT
+
 import heapq
 
 def move(loc, direction):
@@ -6,6 +9,11 @@ def move(loc, direction):
 
 
 def get_sum_of_cost(paths):
+    """
+    Return the sum of the cost of the given paths.
+    param paths: a list of paths
+    return: the sum of the cost of the given paths
+    """
     rst = 0
     for path in paths:
         rst += len(path) - 1
@@ -33,7 +41,6 @@ def compute_heuristics(my_map, goal):
                 existing_node = closed_list[child_loc]
                 if existing_node['cost'] > child_cost:
                     closed_list[child_loc] = child
-                    # open_list.delete((existing_node['cost'], existing_node['loc'], existing_node))
                     heapq.heappush(open_list, (child_cost, child_loc, child))
             else:
                 closed_list[child_loc] = child
@@ -77,6 +84,11 @@ def get_location(path, time):
 
 
 def get_path(goal_node):
+    """ 
+    Extract the path from the goal_node
+    param goal_node: the goal node
+    return: the path from the start location to the goal location
+    """
     path = []
     curr = goal_node
     while curr is not None:

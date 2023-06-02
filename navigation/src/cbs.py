@@ -1,10 +1,13 @@
+##############################
+# FILE THAT CREATES THE DIFFERENT PATHS FOR THE AGENTS
+# Coordinates the different paths using the path created by single_agent_planner.py for only one agent
+
 import random
 import time as timer
 import heapq
 from single_agent_planner import compute_heuristics, a_star, get_location, get_sum_of_cost
 
 DEBUG = False
-
 
 def normalize_paths(pathA, pathB):
     """
@@ -261,13 +264,11 @@ class CBSSolver(object):
             p = self.pop_node()
             # if there are no collisions, we found a solution
             if not p['collisions']:
-                self.print_results(p)
                 return p['paths']
             # we choose a collision and turn it into constraints
             collision = random.choice(p['collisions'])
             # 4.2 Adjusting the High-Level Search
             constraints = disjoint_splitting(collision) if disjoint else standard_splitting(collision)
-            # HERE
             for c in constraints:
                 skip_node = False
                 q = {'cost': 0,
@@ -301,13 +302,3 @@ class CBSSolver(object):
                 else:
                     raise BaseException('No solutions')
         raise BaseException('Time limit exceeded')
-
-    def print_results(self, node):
-        pass
-        #if DEBUG:
-        #print("\n Found a solution! \n")
-        #CPU_time = timer.time() - self.start_time
-        #print("CPU time (s):    {:.2f}".format(CPU_time))
-        #print("Sum of costs:    {}".format(get_sum_of_cost(node['paths'])))
-        #print("Expanded nodes:  {}".format(self.num_of_expanded))
-        #print("Generated nodes: {}".format(self.num_of_generated))
