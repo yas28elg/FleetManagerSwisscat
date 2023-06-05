@@ -14,6 +14,7 @@ from single_agent_planner import compute_heuristics, a_star, get_sum_of_cost
 import random
 import numpy as np
 from hungarian_algorithm import hungarian_algorithm, ans_calculation
+from munkres import Munkres # hungarian algorithm
 from cbs import CBSSolver
 #from prioritized import PrioritizedPlanningSolver
 
@@ -27,11 +28,11 @@ import rospy
 import actionlib
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 
-stations = { 'discovery' : (5, 2), 'omni' : (5, 10), 'synt' : (9, 10), 'sfc' : (0, 10) }
-robots = { '0' : (17, 1), '1' : (19, 1), '2' : (3, 5), '3' : (17, 10),'4' : (19, 10)}
-number_robot = 5
-number_station = 4
-state_var = 0 # 0: free, 1: has a task
+#stations = { 'discovery' : (5, 2), 'omni' : (5, 10), 'synt' : (9, 10), 'sfc' : (0, 10) }
+#robots = { '0' : (17, 1), '1' : (19, 1), '2' : (3, 5), '3' : (17, 10),'4' : (19, 10)}
+#number_robot = 5
+#number_station = 4
+#state_var = 0 # 0: free, 1: has a task
 
 class Robot():
 
@@ -42,7 +43,7 @@ class Robot():
         self.posY = initY
         self.goalX = [initX]
         self.goalY = [initY]
-        self. path = []
+        self.path = []
         self.produit = np.array([[0, 1, -3.6],[-1, 0, 4.5], [0, 0, 1]]) @ (self.posX/2.1, self.posY/2.1, 1)
         self.posX_gazebo = round(self.produit[0], 2 )
         self.posY_gazebo = round(self.produit[1], 2 )
@@ -73,21 +74,7 @@ class Robot():
         self.posX_gazebo = round(odom_data.pose.pose.position.x, 2)
         self.posY_gazebo = round(odom_data.pose.pose.position.y, 2)
 
-    
-    '''
-    # Changement de base MAPF 2 GAZEBO
-    def base_MAPF2Gazebo(self):
-        # input: paths in the MAPF frame
-        # output: paths in the GAZEBO frame
-        self.path_gazebo.clear()
-        matrix_chg_base = np.array([[0, 1, -3.6],[-1, 0, 4.5], [0, 0, 1]])
-        #print(self.name, len(self.path), self.path)
-        for i in range(0, len(self.checkpoint)): #We start at 1 so we don't take into account the initial position NOT the case anymore
-            path_temp = (self.checkpoint[i][0]/2.1, self.checkpoint[i][1]/2.1, 1)
-            produit = matrix_chg_base @ path_temp
-            self.path_gazebo.append((round(produit[0], 2), round(produit[1], 2)))
-        print('Path in Gazebo coordinate', self.name, self.path_gazebo)
-    '''
+
     # Changement de base MAPF 2 GAZEBO
     def base_MAPF2Gazebo(self):
         # input: paths in the MAPF frame
@@ -99,7 +86,7 @@ class Robot():
             path_temp = (self.path[i][0]/2.1, self.path[i][1]/2.1, 1)
             produit = matrix_chg_base @ path_temp
             self.path_gazebo.append((round(produit[0], 2), round(produit[1], 2)))
-        #print('Path in Gazebo coordinate', self.name, self.p@ath_gazebo)
+        print('Path in converted Gazebo coordinate')
 
 
     # Changement de base GAZEBO 2 MAPF
@@ -121,6 +108,7 @@ class Robot():
 
     # Envoyer position au robot
     def send_goal(self):
+        print('----SEND GOAL----')
         # Create a move_base client
         name = '/'+ self.name + '/move_base'
         client = actionlib.SimpleActionClient(name, MoveBaseAction)
@@ -141,12 +129,12 @@ class Robot():
             goal.target_pose.pose.position.y = self.path_gazebo[0][1]
             self.goal_tempX = self.path_gazebo[0][0]
             self.goal_tempY = self.path_gazebo[0][1]
-            print(self.path_gazebo[0][0], self.path_gazebo[0][1])
+            print('new checkpoint or goal for ', self.name, self.path_gazebo[0][0], self.path_gazebo[0][1])
             
         else:
             goal.target_pose.pose.position.x = self.path_gazebo[0][0]
             goal.target_pose.pose.position.y = self.path_gazebo[0][1]
-            print(self.path_gazebo[0][0], self.path_gazebo[0][1])
+            print('same pos', self.path_gazebo[0][0], self.path_gazebo[0][1])
             self.state = 0 # the robot is free
 
         #goal.target_pose.pose.orientation.w = 1.0
@@ -170,7 +158,11 @@ class Robot():
         print('checkpoint', self.checkpoint)
     '''
     
-
+class Station:
+    def __init__(self, name, x, y):
+        self.name = name
+        self.x = x
+        self.y = y
 
 # MAP GENERATION (FOR A*)
 def import_mapf_instance(filename):
@@ -201,17 +193,20 @@ def import_mapf_instance(filename):
 
 
 #TASK GENERATION
-def task_generator(number_station, stations):
+def task_generator(stations):
     # input: number of station and name of stations
-    # output: list containing the tasks to perform
-    #number_task = random.randint(1, number_station)
-    number_task = 4
-    tasks_to_do = random.sample(list(stations), k=number_task)
+    # output: list containing the tasks (indexes) to perform )
+    number_station = len(stations)
+    # number_task = random.randint(1, number_station)
+    number_task = 2
+    #tasks_to_do = random.sample(stations, k=number_task)
+
+    tasks_to_do = random.sample(range(0, len(stations)), k=number_task)
+    next_tasks_to_do = random.sample(range(0, len(stations)), k=number_task)
+
     #tasks_to_do = ['discovery', 'omni', 'synt']
     #next_tasks_to_do =[ 'synt', 'sfc', 'omni']
-    print('Tasks to do', tasks_to_do)
-    next_tasks_to_do = random.sample(list(stations), k=number_task)
-    print('Next tasks to do', next_tasks_to_do)
+    #next_tasks_to_do = random.sample(list(stations), k=number_task)
 
     #tasks_to_do = ['discovery', 'omni', 'synt', 'sfc']
     #next_tasks_to_do = ['discovery', 'synt', 'sfc', 'omni']
@@ -219,11 +214,22 @@ def task_generator(number_station, stations):
     # check element wise if next_tasks_to_do is identical to tasks_to_do and change next_tasks_to_do if its the case 
     for i in range(0, number_task):
         if tasks_to_do[i] == next_tasks_to_do[i]:
-            print('Same task ')
-            station_list =  list(stations)
+            print('Same task')
+            station_list =  [i for i in range(0, len(stations))]
+            print('Station list', station_list)
+            print('task: ', tasks_to_do[i])
+            print(type(tasks_to_do[i]))
             station_list.remove(tasks_to_do[i])
             print('Station list', station_list)
             next_tasks_to_do[i] = random.choice(station_list)
+    '''station_list =  [i for i in range(0, len(stations))]
+    for i in range(0, number_task):
+      if next_tasks_to_do[i] in station_list:
+        station_list.remove(next_tasks_to_do[i])
+
+    for i in range(0, number_task):
+        if tasks_to_do[i] == next_tasks_to_do[i]:
+            next_tasks_to_do[i] = random.choice(station_list)'''
    
     return tasks_to_do, next_tasks_to_do
 
@@ -231,81 +237,48 @@ def task_generator(number_station, stations):
 # TASK ALLOCATION
 # input: robots
 # goal: update the robot goals if needed
-def task_allocation(robot1, robot2, robot3, robot4, robot5, stations, tasks_to_do, next_tasks_to_do):
-    
-    starts_robots = [(robot1.posX, robot1.posY), (robot2.posX, robot2.posY), (robot3.posX, robot3.posY), (robot4.posX, robot4.posY), (robot5.posX, robot5.posY)]
-    goals_allocation = []
-    cost_matrix = np.zeros((number_robot,number_robot))
+#def task_allocation(robot1, robot2, robot3, robot4, robot5, stations, tasks_to_do, next_tasks_to_do):
+def task_allocation(stations, tasks_to_do, next_tasks_to_do):
 
+    starts_robots = [(robot.posX, robot.posY) for robot in robots]
+    goals_allocation = []
+    #cost_matrix = np.zeros((number_robot,number_robot))
+    cost_matrix = np.zeros((len(tasks_to_do), len(robots)))
     for i in range(0, len(tasks_to_do)):
-        goals_allocation.append(stations[tasks_to_do[i]])
+        goals_allocation.append((stations[tasks_to_do[i]].x, stations[tasks_to_do[i]].y))
     
     heuristics = []
     for goal in goals_allocation:
         heuristics.append(compute_heuristics(my_map, goal))
 
     # compute the cost matrix
-    for i in range(0, len(robots)):
-        for j in range(0, len(tasks_to_do)):
-            path = a_star(my_map, starts_robots[i], goals_allocation[j], heuristics[j], 0, [])
+    for i in range(0, len(tasks_to_do)):
+        for j in range(0, len(robots)):
+            path = a_star(my_map, starts_robots[j], goals_allocation[i], heuristics[i], 0, [])
             cost_matrix[i][j]=len(path)
-
-    print('Cost matrix', cost_matrix)
+    #print('Cost matrix', cost_matrix)
 
     
     # Hungarian algorithm
-    ans_pos = hungarian_algorithm(cost_matrix.copy())#Get the element position.
-    ans, ans_mat = ans_calculation(cost_matrix, ans_pos)#Get the minimum or maximum value and corresponding matrix.
-    print('ans_pos', ans_pos)
-    print('ans', ans)
-    print('ans_mat', ans_mat)
+    m = Munkres()
+    indexes = m.compute(cost_matrix) # it outputs a list of assignments (task, robot)
 
-    result = np.nonzero(ans_mat)
-    # result[0]: contains the index (lines) of the nonzero element - it corresponds to which robots should perform the task
-    # result[1]: contains the index (column) of the nonzero element - it corresponds to which task should be performed
-    goals_allocation = [(robot1.goalX, robot1.goalY), (robot2.goalX, robot2.goalY), (robot3.goalX, robot3.goalY), (robot4.goalX, robot4.goalY), (robot5.goalX, robot5.goalY)]
-
+    print(indexes)
+    #goals_allocation = [(robot.goalX, robot.goalY) for robot in robots]
+    
     # Update goals
-    for j in range(0, len(result[0])):
-        if result[0][j] == 0:
-            robot1.goalX.append(np.array(stations[next_tasks_to_do[result[1][j]]])[0])
-            robot1.goalY.append(np.array(stations[next_tasks_to_do[result[1][j]]])[1])
-            robot1.goalX.append(np.array(stations[tasks_to_do[result[1][j]]])[0])
-            robot1.goalY.append(np.array(stations[tasks_to_do[result[1][j]]])[1])
-            robot1.state = 1
-            print('robot 1 is taking the task', j)
-        elif result[0][j] == 1:
-            robot2.goalX.append(np.array(stations[next_tasks_to_do[result[1][j]]])[0])
-            robot2.goalY.append(np.array(stations[next_tasks_to_do[result[1][j]]])[1])
-            robot2.goalX.append(np.array(stations[tasks_to_do[result[1][j]]])[0])
-            robot2.goalY.append(np.array(stations[tasks_to_do[result[1][j]]])[1])
-            robot2.state = 1
-            print('robot 2 is taking the task', j)
-        elif result[0][j] == 2:
-            robot3.goalX.append(np.array(stations[next_tasks_to_do[result[1][j]]])[0])
-            robot3.goalY.append(np.array(stations[next_tasks_to_do[result[1][j]]])[1])
-            robot3.goalX.append(np.array(stations[tasks_to_do[result[1][j]]])[0])
-            robot3.goalY.append(np.array(stations[tasks_to_do[result[1][j]]])[1])
-            robot3.state = 1
-            print('robot 3 is taking the task', j)
-        elif result[0][j] == 3:
-            robot4.goalX.append(np.array(stations[next_tasks_to_do[result[1][j]]])[0])
-            robot4.goalY.append(np.array(stations[next_tasks_to_do[result[1][j]]])[1])
-            robot4.goalX.append(np.array(stations[tasks_to_do[result[1][j]]])[0])
-            robot4.goalY.append(np.array(stations[tasks_to_do[result[1][j]]])[1])
-            robot4.state = 1
-            print('robot 4 is taking the task', j)
-        elif result[0][j] == 4:
-            robot5.goalX.append(np.array(stations[next_tasks_to_do[result[1][j]]])[0])
-            robot5.goalY.append(np.array(stations[next_tasks_to_do[result[1][j]]])[1])
-            robot5.goalX.append(np.array(stations[tasks_to_do[result[1][j]]])[0])
-            robot5.goalY.append(np.array(stations[tasks_to_do[result[1][j]]])[1])
-            robot5.state = 1
-            print('robot 5 is taking the task', j)
-            
-    
-    goals_allocation = [(robot1.goalX[-1], robot1.goalY[-1]), (robot2.goalX[-1], robot2.goalY[-1]), (robot3.goalX[-1], robot3.goalY[-1]), (robot4.goalX[-1], robot4.goalY[-1]), (robot5.goalX[-1], robot5.goalY[-1])]
-    
+    for j in range(0, len(indexes)):
+        robot_index = indexes[j][1]
+        robots[robot_index].goalX.append(stations[next_tasks_to_do[indexes[j][0]]].x)
+        robots[robot_index].goalY.append(stations[next_tasks_to_do[indexes[j][0]]].y)
+        robots[robot_index].goalX.append(stations[tasks_to_do[indexes[j][0]]].x)
+        robots[robot_index].goalY.append(stations[tasks_to_do[indexes[j][0]]].y)
+
+        robots[robot_index].state = 1
+        print(robots[robot_index].name, 'is taking the task', j)
+
+    goals_allocation = [(robot.goalX[-1], robot.goalY[-1]) for robot in robots]
+    #print('goals', goals_allocation)
     return goals_allocation
 
 
@@ -336,21 +309,28 @@ def check_checkpoint(robot):
     print('pos robot', robot.posX_gazebo, robot.posY_gazebo)
     print('pos checkpoint', robot.path_gazebo[0][0], robot.path_gazebo[0][1])
     print('goal temp', robot.goal_tempX, robot.goal_tempY)
-    print('distance to goal', np.sqrt((robot.posX_gazebo-robot.goal_tempX)**2+(robot.posY_gazebo-robot.goal_tempY)**2))
-    if np.sqrt((robot.posX_gazebo-robot.goal_tempX)**2+(robot.posY_gazebo-robot.goal_tempY)**2)<0.4:
-        print('Here')
+    print('distance to goal X', abs(robot.posX_gazebo-robot.goal_tempX))
+    print('distance to goal Y', abs(robot.posY_gazebo-robot.goal_tempY))
+    #if np.sqrt((robot.posX_gazebo-robot.goal_tempX)**2+(robot.posY_gazebo-robot.goal_tempY)**2)<0.4:
+    if abs(robot.posX_gazebo-robot.goal_tempX)<0.4 and abs(robot.posY_gazebo-robot.goal_tempY)<0.4:
+        print('next checkpoint')
         robot.send_goal()
 
 # Move to next task if all robot are free
 # Check if all robots are free
-def state_system(robot1, robot2, robot3, robot4, robot5):
-    if robot1.state == 0 and robot2.state == 0 and robot3.state == 0 and robot4.state == 0 and robot5.state == 0:
+def state_system(robots):
+    for robot in robots:
+         if robot.state == 1:
+                return 1
+    return 0
+
+'''    if (robot.state == 0 for robot in robots):
         print('Robots free')
         return 0
     else:
         print('Robots busy')
         return 1
-
+'''
 
 # Create checkpoint from the path of the robot where the direction changes
 def checkpoint_generator(robot):
@@ -371,39 +351,6 @@ def check_boundaries(X, Y, my_map):
     else:
         return False
     
-'''
-# Check if the robot is at an obstacle position
-def check_obstacle(robot, my_map):
-    if my_map[robot.posX][robot.posY] == True:
-        matrix_chg_base = np.array([[0, -1, 4.5],[1, 0, 3.6], [0, 0, 1]])
-        path_temp = (robot.posX_gazebo, robot.posY_gazebo, 1)
-        produit = matrix_chg_base @ path_temp
-        posX_temp = produit[0]*2.1
-        posY_temp = produit[1]*2.1
-        deltaX = posX_temp - robot.posX
-        deltaY = posY_temp - robot.posY
-        if deltaX > deltaY:
-            if check_boundaries(robot.posX+1, robot.posY, my_map) == True:
-                if my_map[robot.posX+1][robot.posY] == False:
-                    robot.posX += 1
-            elif check_boundaries(robot.posX-1, robot.posY, my_map) == True:
-                if my_map[robot.posX-1][robot.posY] == False:
-                    robot.posX -= 1
-            elif check_boundaries(robot.pos, robot.posY+1, my_map) == True:
-                if my_map[robot.posX][robot.posY+1] == False:
-                    robot.posY += 1
-            elif check_boundaries(robot.posX, robot.posY-1, my_map) == True:
-                if my_map[robot.posX][robot.posY-1] == False:
-                    robot.posY -= 1
-        else:
-            if check_boundaries(robot.pos, robot.posY+1, my_map) == True:
-                if my_map[robot.posX][robot.posY+1] == False:
-                    robot.posY += 1
-            elif check_boundaries(robot.posX, robot.posY-1, my_map) == True:
-                if my_map[robot.posX][robot.posY-1] == False:
-                    robot.posY -= 1
-            elif check_boundaries(robot.posX+1, robot.posY, my_map) == True:configparser
-'''
 
 def create_robots_from_ini_file(file_path):
     config = configparser.ConfigParser()
@@ -417,21 +364,24 @@ def create_robots_from_ini_file(file_path):
         robot = Robot("robot" + str(i) , x, y, station_id)
         robots.append(robot)
     return robots
-        
+
+
 def create_stations_from_ini_file(file_path):
     config = configparser.ConfigParser()
     config.read(file_path)
-    global_section = config['Global']
-    number_stations = int(global_section['number_stations'])
-    for i in range(1, number_stations + 1):
-        station_config = config['Stations']
-        stations_list = map(int, station_config.split(';'))
+    stations_list = []
+    stations_config = config['Stations']['stations']
+    station_configs = stations_config.split(';')
+    for station_config in station_configs:
+        name, x, y = station_config.split(',')
+        station = Station(name.strip(), int(x), int(y))
+        stations_list.append(station)
     return stations_list
           
 def create_all_from_ini_file(file_path):
-    create_robots_from_ini_file(file_path)
-    create_stations_from_ini_file(file_path)
-    return True
+    robots = create_robots_from_ini_file(file_path)
+    stations = create_stations_from_ini_file(file_path)
+    return robots, stations
 
 if __name__ == '__main__':
     try:
@@ -442,32 +392,28 @@ if __name__ == '__main__':
         #rospy.init_node('send_goal', anonymous=True)
 
 
-        # init robots with  initial position and name
-        robot1 = Robot('robot1', 17, 1, 0)
-        robot2 = Robot('robot2', 19, 1, 1)
-        robot3 = Robot('robot3', 3, 5, 2)
-        robot4 = Robot('robot4', 17, 10, 3)
-        robot5 = Robot('robot5', 19, 10, 4)
+        # init robots and stations with  initial position and name
+        robots, stations = create_all_from_ini_file('configrobots.ini')
 
-        robots = create_robots_from_ini_file('configrobots.ini')
         # Accessing robot and station properties:
         for robot in robots:
             print(f"Robot {robot.name}: ({robot.posX}, {robot.posY})")
 
-        
+        for station in stations:
+            print(f"Stations {station.name}: ({station.x}, {station.y})")
+
         # init map
         my_map = import_mapf_instance('circuit_MAPF.txt')
-        print(len(my_map), len(my_map[0]), len(my_map[1]))
         
         # generate the tasks
-        tasks_to_do, next_tasks_to_do = task_generator(number_station, stations)
+        tasks_to_do, next_tasks_to_do = task_generator(stations)
         print('task generated')
         print(tasks_to_do, next_tasks_to_do)
         
         # task allocation
-        goals = task_allocation(robot1, robot2, robot3, robot4, robot5, stations, tasks_to_do, next_tasks_to_do )
+        goals = task_allocation(stations, tasks_to_do, next_tasks_to_do )
         print('Goals allocated', goals)
-        print([(robot.name, robot.goalX, robot.goalY) for robot in robots])
+        #print([(robot.name, robot.goalX, robot.goalY, '................') for robot in robots])
         
         # Find paths
         starts = [(robot.posX, robot.posY) for robot in robots]
@@ -475,105 +421,97 @@ if __name__ == '__main__':
         cbs = CBSSolver(my_map, starts, goals)
         paths = cbs.find_solution('--disjoint')
 
-        #print(paths)
-        robot1.path = paths[0] 
-        robot2.path = paths[1] 
-        robot3.path = paths[2] 
-        robot4.path = paths[3] 
-        robot5.path = paths[4]
-        print('Paths robot 1', robot1.path)
-        print('Paths robot 2', robot2.path)
-        print('Paths robot 3', robot3.path)
-        print('Paths robot 4', robot4.path)
-        print('Paths robot 5', robot5.path)
+        
+        # Update paths
 
+        for robot in robots:
+            robot.path = paths[robots.index(robot)]
+            #print(robot.name, robot.path)
+    
         print('Paths updated') 
 
         # Change frame MAPF 2 Gazebo (for path)
-        
-        robot1.base_MAPF2Gazebo()
-        robot2.base_MAPF2Gazebo()
-        robot3.base_MAPF2Gazebo()
-        robot4.base_MAPF2Gazebo()
-        robot5.base_MAPF2Gazebo()
-        
+        robots[0].base_MAPF2Gazebo()
+        robots[1].base_MAPF2Gazebo()
+        robots[2].base_MAPF2Gazebo()
+        robots[3].base_MAPF2Gazebo()
+        robots[4].base_MAPF2Gazebo()
+
 
         # Get position (Gazebo frame)
-        rospy.Subscriber('/robot1/odom',Odometry,robot1.Position)
-        rospy.Subscriber('/robot2/odom',Odometry,robot2.Position)
-        rospy.Subscriber('/robot3/odom',Odometry,robot3.Position)
-        rospy.Subscriber('/robot4/odom',Odometry,robot4.Position)
-        rospy.Subscriber('/robot5/odom',Odometry,robot5.Position)
+        rospy.Subscriber('/robot1/odom',Odometry,robots[0].Position)
+        rospy.Subscriber('/robot2/odom',Odometry,robots[1].Position)
+        rospy.Subscriber('/robot3/odom',Odometry,robots[2].Position)
+        rospy.Subscriber('/robot4/odom',Odometry,robots[3].Position)
+        rospy.Subscriber('/robot5/odom',Odometry,robots[4].Position)
+    
 
         # a checker 
-        robot1.goal_tempX = robot1.posX_gazebo
-        robot1.goal_tempY = robot1.posY_gazebo
-        robot2.goal_tempX = robot2.posX_gazebo
-        robot2.goal_tempY = robot2.posY_gazebo
-        robot3.goal_tempX = robot3.posX_gazebo
-        robot3.goal_tempY = robot3.posY_gazebo
-        robot4.goal_tempX = robot4.posX_gazebo
-        robot4.goal_tempY = robot4.posY_gazebo
-        robot5.goal_tempX = robot5.posX_gazebo
-        robot5.goal_tempY = robot5.posY_gazebo
+        robots[0].goal_tempX = robots[0].posX_gazebo
+        robots[0].goal_tempY = robots[0].posY_gazebo
+        robots[1].goal_tempX = robots[1].posX_gazebo
+        robots[1].goal_tempY = robots[1].posY_gazebo
+        robots[2].goal_tempX = robots[2].posX_gazebo
+        robots[2].goal_tempY = robots[2].posY_gazebo
+        robots[3].goal_tempX = robots[3].posX_gazebo
+        robots[3].goal_tempY = robots[3].posY_gazebo
+        robots[4].goal_tempX = robots[4].posX_gazebo
+        robots[4].goal_tempY = robots[4].posY_gazebo
+
 
         while True:
         
             print(' ')
             print('..................................................................')
 
-            print('Pos Gazebo robot 1:', robot1.posX_gazebo, robot1.posY_gazebo)
-            print('Pos Gazebo robot 2:', robot2.posX_gazebo, robot2.posY_gazebo)
-            print('Pos Gazebo robot 3:', robot3.posX_gazebo, robot3.posY_gazebo)
-            print('Pos Gazebo robot 4:', robot4.posX_gazebo, robot4.posY_gazebo)
-            print('Pos Gazebo robot 5:', robot5.posX_gazebo, robot5.posY_gazebo)
-
-            state_var = state_system(robot1, robot2, robot3, robot4, robot5)
+            state_var = state_system(robots)
 
             if state_var == 0:
-
+                
                 # Update goals
-                check_goal(robot1, goals)
-                check_goal(robot2, goals)
-                check_goal(robot3, goals)
-                check_goal(robot4, goals)
-                check_goal(robot5, goals)
+                check_goal(robots[0], goals)
+                check_goal(robots[1], goals)
+                check_goal(robots[2], goals)
+                check_goal(robots[3], goals)
+                check_goal(robots[4], goals)
 
                 # Compute the new paths
                 # 1. Update MAPF position
-                robot1.base_Gazebo2MAPF()
-                robot2.base_Gazebo2MAPF()
-                robot3.base_Gazebo2MAPF()
-                robot4.base_Gazebo2MAPF()
-                robot5.base_Gazebo2MAPF()
+                robots[0].base_Gazebo2MAPF()
+                robots[1].base_Gazebo2MAPF()
+                robots[2].base_Gazebo2MAPF()
+                robots[3].base_Gazebo2MAPF()
+                robots[4].base_Gazebo2MAPF()
+    
                 # 2. Get the new starts
-                starts = [(robot1.posX, robot1.posY), (robot2.posX, robot2.posY), (robot3.posX, robot3.posY), (robot4.posX, robot4.posY), (robot5.posX, robot5.posY)]
+                starts = [(robot.posX, robot.posY) for robot in robots]
                 print('Current position: ', starts)
                 # 3. Compute the new paths
                 cbs = CBSSolver(my_map, starts, goals)
                 paths = cbs.find_solution('--disjoint')
                 # 4. Update the paths
-                robot1.path = paths[0] 
-                robot2.path = paths[1] 
-                robot3.path = paths[2] 
-                robot4.path = paths[3] 
-                robot5.path = paths[4]
+                robots[0].path = paths[0] 
+                robots[1].path = paths[1]
+                robots[2].path = paths[2]
+                robots[3].path = paths[3]
+                robots[4].path = paths[4]
+     
                 # 5. Change paths frame to Gazebo coordinates
-                robot1.base_MAPF2Gazebo()
-                robot2.base_MAPF2Gazebo()
-                robot3.base_MAPF2Gazebo()
-                robot4.base_MAPF2Gazebo()
-                robot5.base_MAPF2Gazebo()
-
+                robots[0].base_MAPF2Gazebo()
+                robots[1].base_MAPF2Gazebo()
+                robots[2].base_MAPF2Gazebo()
+                robots[3].base_MAPF2Gazebo()
+                robots[4].base_MAPF2Gazebo()
                 print('Paths updated')
 
 
             # check if checkpoint is reached
-            check_checkpoint(robot1)
-            check_checkpoint(robot2)
-            check_checkpoint(robot3)
-            check_checkpoint(robot4)
-            check_checkpoint(robot5)
+            
+            check_checkpoint(robots[0])
+            check_checkpoint(robots[1])
+            check_checkpoint(robots[2])
+            check_checkpoint(robots[3])
+            check_checkpoint(robots[4])
 
             #print(paths)
       
@@ -587,19 +525,6 @@ if __name__ == '__main__':
             
 
         
-
-
-
-        '''
-        # Initialize ROS node
-        rospy.init_node('send_goal', anonymous=True)
-        coordinate = paths[2][-1]
-        x = coordinate[0]
-        y = coordinate[1]
-        # Send some goals
-        send_goal(x, y)  # send goal to (2, 0)
-        #send_goal(1, 1)  # send goal to (1, 1)
-        '''
     except rospy.ROSInterruptException:
         pass
 

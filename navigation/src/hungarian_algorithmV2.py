@@ -1,9 +1,13 @@
 # chat GPT version
 
 import numpy as np
-def hungarian_algorithm(cost_matrix):
+
+
+def hungarian_algorithm2(cost_matrix):
     num_tasks = min(cost_matrix.shape[0], 4)  # Maximum 4 tasks
+    print(num_tasks)
     num_robots = cost_matrix.shape[1]
+    print(num_robots)
     # Pad the cost matrix with large values if the number of tasks is less than 4
     if num_tasks < 4:
         padded_cost_matrix = np.pad(cost_matrix, ((0, 4 - num_tasks), (0, 0)), constant_values=np.inf)
@@ -23,6 +27,7 @@ def hungarian_algorithm(cost_matrix):
     # Return the assignment positions
     assignment_positions = [(task, robot) for robot, task in enumerate(assignment) if task != -1]
     return assignment_positions
+
 def augment_path(task, visited_rows, visited_cols, assignment, subtracted_matrix):
     num_robots = subtracted_matrix.shape[1]
     for robot in range(num_robots):
