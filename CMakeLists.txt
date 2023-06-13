@@ -155,8 +155,7 @@ include_directories(
 
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
- catkin_install_python(PROGRAMS navigation/src/sendGoals_multiple.py
- navigation/src/generate_goalsV3.py
+ catkin_install_python(PROGRAMS navigation/src/generate_goals.py
 #   scripts/my_python_script
    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
  )

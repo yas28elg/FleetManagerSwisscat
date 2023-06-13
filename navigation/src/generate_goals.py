@@ -16,6 +16,7 @@ import numpy as np
 from hungarian_algorithm import hungarian_algorithm, ans_calculation
 from munkres import Munkres # hungarian algorithm
 from cbs import CBSSolver
+from prioritized import PrioritizedPlanningSolver
 #from prioritized import PrioritizedPlanningSolver
 
 from nav_msgs.msg import Odometry
@@ -25,6 +26,7 @@ import configparser
 
 
 import rospy
+import time 
 import actionlib
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 
@@ -33,6 +35,7 @@ from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 #number_robot = 5
 #number_station = 4
 #state_var = 0 # 0: free, 1: has a task
+time_begin = 0.0
 
 class Robot():
 
@@ -50,8 +53,12 @@ class Robot():
         self.goal_tempX = 0
         self.goal_tempY = 0
         self.path_gazebo = []
-        self.state = 0 # 0: free, 1: has a task
+        self.state_checkpoint = 0 # 0: arrived, 1: on the way
+        self.state_mission = 0 # 0: free, 1: still is performing a mission
+        self.state_goal = 0 # 0: finished the task, 1: is performing the task
+        self.timeGoal=[] # time to achieve a task 
         #self.checkpoint = []
+
 
     # in MAPF frame
     #posX 
@@ -121,9 +128,9 @@ class Robot():
         goal = MoveBaseGoal()
         goal.target_pose.header.frame_id = "map"
         goal.target_pose.pose.orientation.w = 1.0
-
         
         if len(self.path_gazebo)> 1:
+            self.state_checkpoint = 1
             self.path_gazebo.pop(0)
             goal.target_pose.pose.position.x = self.path_gazebo[0][0]
             goal.target_pose.pose.position.y = self.path_gazebo[0][1]
@@ -132,11 +139,16 @@ class Robot():
             print('new checkpoint or goal for ', self.name, self.path_gazebo[0][0], self.path_gazebo[0][1])
             
         else:
+            duration = rospy.Time.now()-time_begin
+            self.timeGoal.append(duration.to_sec())
+            print(self.name, 'arrived at the goal', self.timeGoal[-1])
             goal.target_pose.pose.position.x = self.path_gazebo[0][0]
             goal.target_pose.pose.position.y = self.path_gazebo[0][1]
             print('same pos', self.path_gazebo[0][0], self.path_gazebo[0][1])
-            self.state = 0 # the robot is free
-
+            self.state_goal = 0 # the robot is free
+            '''if len(self.goalX) == 1:
+                self.state_mission = 0 # the robot has finished the mission
+'''
         #goal.target_pose.pose.orientation.w = 1.0
 
         # Send the goal and wait for completion
@@ -196,9 +208,9 @@ def import_mapf_instance(filename):
 def task_generator(stations):
     # input: number of station and name of stations
     # output: list containing the tasks (indexes) to perform )
-    number_station = len(stations)
+    '''number_station = len(stations)
     # number_task = random.randint(1, number_station)
-    number_task = 2
+    number_task = 4
     #tasks_to_do = random.sample(stations, k=number_task)
 
     tasks_to_do = random.sample(range(0, len(stations)), k=number_task)
@@ -222,7 +234,7 @@ def task_generator(stations):
             station_list.remove(tasks_to_do[i])
             print('Station list', station_list)
             next_tasks_to_do[i] = random.choice(station_list)
-    '''station_list =  [i for i in range(0, len(stations))]
+    station_list =  [i for i in range(0, len(stations))]
     for i in range(0, number_task):
       if next_tasks_to_do[i] in station_list:
         station_list.remove(next_tasks_to_do[i])
@@ -230,9 +242,15 @@ def task_generator(stations):
     for i in range(0, number_task):
         if tasks_to_do[i] == next_tasks_to_do[i]:
             next_tasks_to_do[i] = random.choice(station_list)'''
-   
-    return tasks_to_do, next_tasks_to_do
+    #stations=discovery,5,2;omni,5,10;synt,9,10;sfc,0,10
+    tasks = [[[0,3],[1,2]], [[1,2],[0,3]], [[1,0],[3,2]], [[0,3, 1],[1,2, 0]], [[3, 1,2],[1, 0,3]], [[2, 1,0],[0,3,2]], [[3, 2, 1,0],[1,0,3,2]]]
+    #tasks_to_do = random.choice(tasks)
+    #tasks_to_do = [[1,0],[2,1]]  #-- Scenario 1
+    #tasks_to_do = [[0,2,3],[2,3,0]]  #-- Scenario 2
+    tasks_to_do = [[0,2,3,1],[1,3,0,2]]  #-- Scenario 3
 
+   
+    return tasks_to_do[0], tasks_to_do[1]
 
 # TASK ALLOCATION
 # input: robots
@@ -273,8 +291,8 @@ def task_allocation(stations, tasks_to_do, next_tasks_to_do):
         robots[robot_index].goalY.append(stations[next_tasks_to_do[indexes[j][0]]].y)
         robots[robot_index].goalX.append(stations[tasks_to_do[indexes[j][0]]].x)
         robots[robot_index].goalY.append(stations[tasks_to_do[indexes[j][0]]].y)
-
-        robots[robot_index].state = 1
+        robots[robot_index].state_goal = 1
+        robots[robot_index].state_mission = 1
         print(robots[robot_index].name, 'is taking the task', j)
 
     goals_allocation = [(robot.goalX[-1], robot.goalY[-1]) for robot in robots]
@@ -284,7 +302,7 @@ def task_allocation(stations, tasks_to_do, next_tasks_to_do):
 
 # Goal reached
 # Check if goal is reached, if it's the case, remove from goal list
-def check_goal(robot, goals):
+def update_goal(robot, goals):
     #goal_temp = goals.copy()
     print(robot.name, 'reached its goal')
     #goal_temp.pop(robot.id)
@@ -298,29 +316,53 @@ def check_goal(robot, goals):
     if len(robot.goalX) > 1:
         robot.goalX.pop(-1)
         robot.goalY.pop(-1)
+        robot.state_goal = 1
     # add the new goal in goals_allocation
+    else:
+        robot.state_mission = 0
     goals[robot.id]=(robot.goalX[-1], robot.goalY[-1])
     print('new goal for', robot.name, 'is', robot.goalX[-1], robot.goalY[-1])
 
 # check checkpoint is reached
-def check_checkpoint(robot):
+def check_checkpoint(current_robot, robots):
     # if the robot is at a radius from the checkpoint, send the next one
-    print('checking pos for robot', robot.name)
+    '''print('checking pos for robot', robot.name)
     print('pos robot', robot.posX_gazebo, robot.posY_gazebo)
     print('pos checkpoint', robot.path_gazebo[0][0], robot.path_gazebo[0][1])
     print('goal temp', robot.goal_tempX, robot.goal_tempY)
     print('distance to goal X', abs(robot.posX_gazebo-robot.goal_tempX))
-    print('distance to goal Y', abs(robot.posY_gazebo-robot.goal_tempY))
-    #if np.sqrt((robot.posX_gazebo-robot.goal_tempX)**2+(robot.posY_gazebo-robot.goal_tempY)**2)<0.4:
-    if abs(robot.posX_gazebo-robot.goal_tempX)<0.4 and abs(robot.posY_gazebo-robot.goal_tempY)<0.4:
-        print('next checkpoint')
-        robot.send_goal()
+    print('distance to goal Y', abs(robot.posY_gazebo-robot.goal_tempY))'''
+    
+    for robot in robots:
+        if abs(robot.posX_gazebo-robot.goal_tempX)<0.4 and abs(robot.posY_gazebo-robot.goal_tempY)<0.4 and robot.state_goal == 1:
+            print(robot.name)
+            print('distance to goal X', abs(robot.posX_gazebo-robot.goal_tempX))
+            print('distance to goal Y', abs(robot.posY_gazebo-robot.goal_tempY))
+            print('next checkpoint')
+            robot.state_checkpoint = 0
+        
+def send_checkpoint(robots):
+    for robot in robots:
+        print('robot', robot.name, 'state checkpoint', robot.state_checkpoint)
+        if robot.state_checkpoint == 1:
+            print('not there yet')
+            return True
+        
+    for robot in robots: # all the robots are at the checkpoint
+        if robot.state_goal == 1: # we send the goal only to the robots performing a task 
+            robot.send_goal()
+    '''robots[0].send_goal()
+    robots[1].send_goal()
+    robots[2].send_goal()
+    robots[3].send_goal()
+    robots[4].send_goal()'''
+    return True
 
 # Move to next task if all robot are free
 # Check if all robots are free
-def state_system(robots):
+def state_task(robots):
     for robot in robots:
-         if robot.state == 1:
+         if robot.state_goal == 1:
                 return 1
     return 0
 
@@ -332,6 +374,12 @@ def state_system(robots):
         return 1
 '''
 
+def state_mission(robots):
+    for robot in robots:
+         if robot.state_mission == 1:
+                return 1
+    return 0
+
 # Create checkpoint from the path of the robot where the direction changes
 def checkpoint_generator(robot):
     checkpoint = []
@@ -342,6 +390,14 @@ def checkpoint_generator(robot):
     checkpoint.append(robot.path[-1])
     robot.path.clear()
     robot.path = checkpoint.copy()
+
+
+def goal_len(robots):
+    for robot in robots:
+        if len(robot.goalX) > 1:
+            return 1 # mission not finished
+    else:
+        return 0 # missions finished
 
 
 # Check if a point is inside  the map
@@ -418,15 +474,16 @@ if __name__ == '__main__':
         # Find paths
         starts = [(robot.posX, robot.posY) for robot in robots]
         print('Current position: ', starts)
+        '''solver = PrioritizedPlanningSolver(my_map, starts, goals)
+        paths = solver.find_solution()'''
         cbs = CBSSolver(my_map, starts, goals)
         paths = cbs.find_solution('--disjoint')
-
-        
+                      
         # Update paths
 
         for robot in robots:
             robot.path = paths[robots.index(robot)]
-            #print(robot.name, robot.path)
+            print(robot.name, robot.path)
     
         print('Paths updated') 
 
@@ -458,22 +515,27 @@ if __name__ == '__main__':
         robots[4].goal_tempX = robots[4].posX_gazebo
         robots[4].goal_tempY = robots[4].posY_gazebo
 
-
+        time_begin = rospy.Time.now()
         while True:
         
             print(' ')
             print('..................................................................')
 
-            state_var = state_system(robots)
+            state_var = state_task(robots)
+            state_miss = state_mission(robots)
 
             if state_var == 0:
+                print('state_var = 0')
+                print('state_miss', state_miss)
+                for robot in robots:
+                    print('state_goal', robot.name, robot.state_goal)
                 
                 # Update goals
-                check_goal(robots[0], goals)
-                check_goal(robots[1], goals)
-                check_goal(robots[2], goals)
-                check_goal(robots[3], goals)
-                check_goal(robots[4], goals)
+                update_goal(robots[0], goals)
+                update_goal(robots[1], goals)
+                update_goal(robots[2], goals)
+                update_goal(robots[3], goals)
+                update_goal(robots[4], goals)
 
                 # Compute the new paths
                 # 1. Update MAPF position
@@ -487,6 +549,8 @@ if __name__ == '__main__':
                 starts = [(robot.posX, robot.posY) for robot in robots]
                 print('Current position: ', starts)
                 # 3. Compute the new paths
+                '''solver = PrioritizedPlanningSolver(my_map, starts, goals)
+                paths = solver.find_solution()'''
                 cbs = CBSSolver(my_map, starts, goals)
                 paths = cbs.find_solution('--disjoint')
                 # 4. Update the paths
@@ -503,15 +567,23 @@ if __name__ == '__main__':
                 robots[3].base_MAPF2Gazebo()
                 robots[4].base_MAPF2Gazebo()
                 print('Paths updated')
-
+            
+            if state_miss == 0:
+                print('Mission completed')
+                for robot in robots:
+                    print(robot.name, robot.timeGoal)
+                break
 
             # check if checkpoint is reached
             
-            check_checkpoint(robots[0])
-            check_checkpoint(robots[1])
-            check_checkpoint(robots[2])
-            check_checkpoint(robots[3])
-            check_checkpoint(robots[4])
+            check_checkpoint(robots[0], robots)
+            '''check_checkpoint(robots[1], robots)
+            check_checkpoint(robots[2], robots)
+            check_checkpoint(robots[3], robots)
+            check_checkpoint(robots[4], robots)
+
+            check_checkpoint(robots)'''
+            send_checkpoint(robots)
 
             #print(paths)
       
@@ -527,6 +599,7 @@ if __name__ == '__main__':
         
     except rospy.ROSInterruptException:
         pass
+
 
 
 
